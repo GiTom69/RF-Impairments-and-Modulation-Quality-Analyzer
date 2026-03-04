@@ -96,3 +96,33 @@ def compute_phase_spectrum(signal: np.ndarray, sampling_rate: float) -> tuple[np
     phase_spectrum = np.angle(fft_result)
     
     return freqs, phase_spectrum
+
+def compute_OBW(signal: np.ndarray, sampling_rate: float, power_threshold: float = 0.99) -> float:
+    """
+    Compute the Occupied Bandwidth (OBW) of a signal.
+
+    Parameters:
+    signal (np.ndarray): The input signal to analyze.
+    sampling_rate (float): The sampling rate of the signal in Hz.
+    power_threshold (float): The percentage of total power to consider for OBW calculation (default is 0.99 for 99%).
+
+    Returns:
+    obw (float): The occupied bandwidth in Hz.
+    """
+    freqs, power_spectrum = compute_power_spectrum(signal, sampling_rate)
+    
+    total_power = np.sum(power_spectrum)
+    cumulative_power = np.cumsum(power_spectrum)
+    
+    # Find the frequency bins that contain the specified percentage of total power
+    lower_idx = np.searchsorted(cumulative_power, (1 - power_threshold) * total_power)
+    upper_idx = np.searchsorted(cumulative_power, power_threshold * total_power)
+    
+    obw = freqs[upper_idx] - freqs[lower_idx]
+    
+    return obw
+
+def compute_SNR(signal: np.ndarray) -> float:
+    # compute the OBW of the signal
+    obw = compute_OBW(signal, sampling_rate=1.0)  # Assuming normalized frequency for OBW calculation
+    

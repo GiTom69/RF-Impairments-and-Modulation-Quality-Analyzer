@@ -9,15 +9,16 @@ def bits_to_groups(bits: np.ndarray, group_size: int) -> np.ndarray:
     return bits.reshape(-1, group_size)
 
 def qam16_modulate(bits: np.ndarray) -> np.ndarray:
-    # Group bits into 4
     groups = bits_to_groups(bits, 4)
-    
-    # Map bits to QAM16 symbol
-    symbols = []
-    for group in groups:
-        I = group[0:2]
-        Q = group[2:4]
-        
-        symbols.append(complex(I, Q))
-    
-    return np.array(symbols)
+    level_map = {
+        (0, 0): -3,
+        (0, 1): -1,
+        (1, 1): 1,
+        (1, 0): 3,
+    }
+
+    i_levels = np.array([level_map[(int(g[0]), int(g[1]))] for g in groups], dtype=float)
+    q_levels = np.array([level_map[(int(g[2]), int(g[3]))] for g in groups], dtype=float)
+
+    symbols = (i_levels + 1j * q_levels) / np.sqrt(10.0)
+    return symbols

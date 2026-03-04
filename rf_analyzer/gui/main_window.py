@@ -4,7 +4,7 @@ import numpy as np
 import streamlit as st
 
 from rf_analyzer.gui.controls_panel import render_controls
-from rf_analyzer.gui.plots_panel import render_metrics, render_plots
+from rf_analyzer.gui.plots_panel import render_information_chain, render_metrics, render_plots
 from rf_analyzer.impairments.adc_quantization import quantize
 from rf_analyzer.impairments.pa_nonlinearity import PA_amplify
 from rf_analyzer.signal.qam import qam16_modulate
@@ -102,3 +102,4 @@ def run_app() -> None:
 
 	render_metrics(evm=evm, acpr=acpr, eff_snr=eff_snr)
 	render_plots(freqs=freqs, psd_pre=psd_pre, psd_post=psd_post, signal=rx)
+	render_information_chain()
