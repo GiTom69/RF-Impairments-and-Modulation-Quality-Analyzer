@@ -1,0 +1,18 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Streamlit: Run App",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "streamlit",
+        "run",
+        "${workspaceFolder}\\rf_analyzer\\main.py"
+      ],
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}
