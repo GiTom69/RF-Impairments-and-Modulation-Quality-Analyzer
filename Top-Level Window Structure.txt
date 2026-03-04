@@ -1,0 +1,79 @@
+Top-Level Window Structure
+
+The GUI consists of four vertical regions stacked top to bottom:
+region			vertical space
+1. Visualizations	30%
+NONE		|Spectrum	|Spectrum	|Spectrum	|NONE		|NONE		|
+NONE		|Constellation 	|Constellation	|Constellation	|Constellation	|NONE		|
+----------------+---------------+---------------+---------------+---------------+---------------+
+2. Metrics		10%
+NONE		|NONE		|EVM		|EVM		|EVM		|EVM		|
+NONE		|NONE		|BER		|BER		|BER		|BER		|
+----------------+---------------+---------------+---------------+---------------+---------------+
+3. Information chain	20%
+BITS SOURCE	|IQ MODULATOR 	|IMPARMENTS	|CHANNEL	|ADC QUANT	|BITS DEST	|
+----------------+---------------+---------------+---------------+---------------+---------------+
+4. Settings		40%
+Bit Source	|IQ Modulation	|RF Impairments	|Channel	|ADC		|NONE		|
+----------------+---------------+---------------+---------------+---------------+---------------+
+
+1. Visualizations
+Each plot panel contains:
+-Title at top
+-Plot area
+-Optional settings
+
+
+Spectrum plot Optional settings: 
+--show OBW toggle
+--show ACPR toggle
+
+Constellation plot Optional settings:
+--Show ideal symbols toggle
+
+2. Metrics
+[EVM %]:	[value]
+[EVM dB]:	[value]
+[BER]:		[value]
+[ACPR]:		[value]
+[OBW]:		[value]
+[SNR]:		[value]
+
+3. Information chain:
+Horizontal chain, Each block is:
+-Rectangular panel
+-Title at top
+-Optional small text under title showing active configuration
+
+Between blocks:
+-Arrow indicator
+
+Metrics placement logic(follow table above):
+
+4.Settings:
+
+Section 1 — Bit Source
+Controls:
+-Source Type selector (Random / File / binary string)
+-string input (seed if random, File path if File, '0' and '1' if binary string)
+
+Section 2 — IQ Modulation
+Controls:
+-Modulation type selector		(BPSK / QPSK / 16-QAM / 64-QAM)
+-Samples per symbol slider		(1 <-> 100, step:1)
+
+Section 3 — RF Impairments
+Controls:
+-IQ Imbalance toggle
+--Gain mismatch slider			(-10dB <-> 10dB, step:1dB)
+--Phase mismatch control		( 0deg <-> 90deg, step:1deg)
+-Phase Noise slider			( 0deg <-> 90deg, step:1deg)
+-PA Nonlinearity (1dBcp) slider		(-10dBm <-> 10dBm, step:1dB)
+
+Section 4 — Channel
+Controls:
+-SNR slider				(-10dB <-> 40dB, step:1dB)
+
+Section 5 — ADC
+Controls:
+-number of bits slider			(4 <-> 32, step:1)

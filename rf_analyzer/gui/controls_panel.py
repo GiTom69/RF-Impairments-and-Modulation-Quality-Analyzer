@@ -1,34 +1,126 @@
 import streamlit as st
 
 
+DEFAULT_CONTROLS = {
+	"source_type": "Random",
+	"source_input": "12345",
+	"modulation_type": "16-QAM",
+	"samples_per_symbol": 8,
+	"iq_imbalance_enabled": False,
+	"iq_gain_mismatch_db": 0,
+	"iq_phase_mismatch_deg": 0,
+	"phase_noise_deg": 0,
+	"pa_1dbcp_dbm": 0,
+	"snr_db": 20,
+	"adc_bits": 12,
+}
+
+
+def initialize_control_state() -> None:
+	for key, value in DEFAULT_CONTROLS.items():
+		if key not in st.session_state:
+			st.session_state[key] = value
+
+
+def get_current_controls() -> dict:
+	initialize_control_state()
+	return {key: st.session_state[key] for key in DEFAULT_CONTROLS}
+
+
+def _source_input_label(source_type: str) -> str:
+	if source_type == "Random":
+		return "Seed"
+	if source_type == "File":
+		return "File path"
+	return "Binary string (0/1)"
+
+
 def render_controls() -> dict:
-	with st.sidebar:
-		st.header("Tx Chain")
-		mod_order = st.selectbox(
-			"Modulation",
-			[4, 16, 64, 256],
-			index=1,
-			format_func=lambda x: {4: "QPSK", 16: "16-QAM", 64: "64-QAM", 256: "256-QAM"}[x],
+	st.subheader("4. Settings")
+	cols = st.columns(6)
+
+	with cols[0]:
+		st.markdown("**Bit Source**")
+		st.selectbox(
+			"Source Type",
+			["Random", "File", "binary string"],
+			key="source_type",
 		)
-		pa_ibo = st.slider("PA IBO (dB)", 0.0, 20.0, 10.0, 0.5)
-		ph_noise = st.slider("Phase Noise (°)", 0.0, 12.0, 2.0, 0.5)
-		iq_gain = st.slider("IQ Gain Imb (dB)", 0.0, 4.0, 0.0, 0.1)
-		iq_phase = st.slider("IQ Phase Imb (°)", 0.0, 15.0, 0.0, 0.5)
+		st.text_input(
+			_source_input_label(st.session_state["source_type"]),
+			key="source_input",
+		)
 
-		st.header("Channel")
-		snr = st.slider("SNR (dB)", 0, 50, 30)
+	with cols[1]:
+		st.markdown("**IQ Modulation**")
+		st.selectbox(
+			"Modulation type",
+			["BPSK", "QPSK", "16-QAM", "64-QAM"],
+			key="modulation_type",
+		)
+		st.slider(
+			"Samples per symbol",
+			min_value=1,
+			max_value=100,
+			step=1,
+			key="samples_per_symbol",
+		)
 
-		st.header("Rx Chain")
-		adc_bits = st.slider("ADC Bits", 4, 16, 12)
-		noise_fig = st.slider("Noise Figure (dB)", 0.0, 20.0, 5.0, 0.5)
+	with cols[2]:
+		st.markdown("**RF Impairments**")
+		st.toggle("IQ Imbalance", key="iq_imbalance_enabled")
+		st.slider(
+			"Gain mismatch (dB)",
+			min_value=-10,
+			max_value=10,
+			step=1,
+			disabled=not st.session_state["iq_imbalance_enabled"],
+			key="iq_gain_mismatch_db",
+		)
+		st.slider(
+			"Phase mismatch (deg)",
+			min_value=0,
+			max_value=90,
+			step=1,
+			disabled=not st.session_state["iq_imbalance_enabled"],
+			key="iq_phase_mismatch_deg",
+		)
+		st.slider(
+			"Phase Noise (deg)",
+			min_value=0,
+			max_value=90,
+			step=1,
+			key="phase_noise_deg",
+		)
+		st.slider(
+			"PA Nonlinearity (1dBcp, dBm)",
+			min_value=-10,
+			max_value=10,
+			step=1,
+			key="pa_1dbcp_dbm",
+		)
 
-	return {
-		"mod_order": mod_order,
-		"pa_ibo": pa_ibo,
-		"ph_noise": ph_noise,
-		"iq_gain": iq_gain,
-		"iq_phase": iq_phase,
-		"snr": snr,
-		"adc_bits": adc_bits,
-		"noise_fig": noise_fig,
-	}
+	with cols[3]:
+		st.markdown("**Channel**")
+		st.slider(
+			"SNR (dB)",
+			min_value=-10,
+			max_value=40,
+			step=1,
+			key="snr_db",
+		)
+
+	with cols[4]:
+		st.markdown("**ADC**")
+		st.slider(
+			"Number of bits",
+			min_value=4,
+			max_value=32,
+			step=1,
+			key="adc_bits",
+		)
+
+	with cols[5]:
+		st.markdown("&nbsp;", unsafe_allow_html=True)
+
+	return get_current_controls()
