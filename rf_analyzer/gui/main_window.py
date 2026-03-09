@@ -162,13 +162,19 @@ def _apply_pa_nonlinearity(signal: np.ndarray, p1dbcp_dbm: float) -> np.ndarray:
 	return soft_real + 1j * soft_imag
 
 
-def _normalize_or_clip_iq(signal: np.ndarray, clipping_enabled: bool) -> np.ndarray:
-	if clipping_enabled:
-		return np.clip(signal.real, -1.0, 1.0) + 1j * np.clip(signal.imag, -1.0, 1.0)
+def _normalize_iq(signal: np.ndarray) -> np.ndarray:
+	max_i = float(np.max(np.abs(signal.real))) if signal.size else 0.0
+	max_q = float(np.max(np.abs(signal.imag))) if signal.size else 0.0
+	scale_i = max(max_i, 1.0)
+	scale_q = max(max_q, 1.0)
+	return (signal.real / scale_i) + 1j * (signal.imag / scale_q)
 
-	max_mag = float(np.max(np.abs(signal))) if signal.size else 0.0
-	scale = max(max_mag, 1.0)
-	return signal / scale
+
+def _clip_and_normalize_iq(signal: np.ndarray, clipping_enabled: bool) -> np.ndarray:
+	processed_signal = signal
+	if clipping_enabled:
+		processed_signal = np.clip(signal.real, -1.0, 1.0) + 1j * np.clip(signal.imag, -1.0, 1.0)
+	return _normalize_iq(processed_signal)
 
 
 def _add_awgn(signal: np.ndarray, snr_db: float, rng: np.random.Generator) -> np.ndarray:
@@ -295,7 +301,7 @@ def run_app() -> None:
 	)
 	impaired = _apply_phase_noise(impaired, controls["phase_noise_deg"], rng)
 	impairments_waveform = _apply_pa_nonlinearity(impaired, controls["pa_1dbcp_dbm"])
-	impairments_waveform = _normalize_or_clip_iq(impairments_waveform, controls["clipping_enabled"])
+	impairments_waveform = _clip_and_normalize_iq(impairments_waveform, controls["clipping_enabled"])
 	channel_out = _add_awgn(impairments_waveform, controls["snr_db"], rng)
 	rx_waveform = _quantize_complex_signal(channel_out, sr_hz=sampling_rate_hz, bits=controls["adc_bits"])
 
@@ -367,7 +373,7 @@ def run_app() -> None:
 		"impairments": (
 			f"IQ G={controls['iq_gain_mismatch_db']} dB, Phase={controls['iq_phase_mismatch_deg']}°, "
 			f"PN={controls['phase_noise_deg']}°, PA={controls['pa_1dbcp_dbm']} dBm, "
-			f"{'Clip' if controls['clipping_enabled'] else 'Normalize'}"
+			f"{'Clip + Normalize' if controls['clipping_enabled'] else 'Normalize'}"
 		),
 		"channel": f"SNR={controls['snr_db']} dB",
 		"adc": f"{controls['adc_bits']} bits",

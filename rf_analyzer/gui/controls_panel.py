@@ -9,7 +9,7 @@ DEFAULT_CONTROLS = {
 	"iq_gain_mismatch_db": 0,
 	"iq_phase_mismatch_deg": 0,
 	"phase_noise_deg": 0,
-	"pa_1dbcp_dbm": 0,
+	"pa_1dbcp_dbm": 10.0,
 	"clipping_enabled": False,
 	"snr_db": 20,
 	"adc_bits": 12,
@@ -125,7 +125,7 @@ def render_controls() -> dict:
 				key="phase_noise_deg",
 			)
 			st.slider(
-				"PA Nonlinearity (1dBcp, dBm)",
+				"PA Nonlinearity (dBm@1dBcp)",
 				min_value=-10,
 				max_value=10,
 				step=1,
