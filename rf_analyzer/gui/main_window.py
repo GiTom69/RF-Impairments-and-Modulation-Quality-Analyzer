@@ -56,6 +56,18 @@ def _generate_symbols(bits: np.ndarray, modulation_type: str) -> tuple[np.ndarra
 	return (levels / np.sqrt(avg_energy)).astype(np.complex128), bits
 
 
+def _upsample_signal(signal: np.ndarray, samples_per_symbol: int) -> np.ndarray:
+	if samples_per_symbol <= 1:
+		return signal.astype(np.complex128, copy=True)
+	return np.repeat(signal.astype(np.complex128), samples_per_symbol)
+
+
+def _sample_symbols_from_waveform(signal: np.ndarray, samples_per_symbol: int) -> np.ndarray:
+	if samples_per_symbol <= 1:
+		return signal.astype(np.complex128, copy=True)
+	return signal[::samples_per_symbol].astype(np.complex128, copy=False)
+
+
 def _demodulate_bits(rx_symbols: np.ndarray, modulation_type: str) -> np.ndarray:
 	bps = _bits_per_symbol(modulation_type)
 
@@ -215,22 +227,32 @@ def _compute_snr_db(reference: np.ndarray, observed: np.ndarray) -> float:
 	return float(10 * np.log10(signal_power / noise_power))
 
 
-def _compute_stage_metrics(reference_symbols: np.ndarray, stage_symbols: np.ndarray, reference_bits: np.ndarray, modulation_type: str) -> dict:
+def _compute_stage_metrics(
+	reference_symbols: np.ndarray,
+	stage_symbols: np.ndarray,
+	reference_bits: np.ndarray,
+	modulation_type: str,
+	spectrum_signal: np.ndarray | None = None,
+	sampling_rate_hz: float = 1e6,
+) -> dict:
 	stage_bits = _demodulate_bits(stage_symbols, modulation_type)[: len(reference_bits)]
 	bit_errors = int(np.sum(stage_bits != reference_bits))
 	ber = bit_errors / len(reference_bits) if len(reference_bits) else 0.0
-	freqs, psd = compute_power_spectrum(stage_symbols, sampling_rate=1e6)
+	fft_signal = stage_symbols if spectrum_signal is None else spectrum_signal
+	freqs, psd = compute_power_spectrum(fft_signal, sampling_rate=sampling_rate_hz)
 	ev_percent = _compute_evm_percent(stage_symbols, reference_symbols)
 	ev_ratio = max(ev_percent / 100.0, 1e-12)
+	acpr_db = _compute_acpr_db(psd, freqs)
+	obw_hz = _compute_obw_hz(psd, freqs)
 	return {
 		"freqs": freqs,
 		"psd_db": 10 * np.log10(psd + 1e-15),
+		"acpr_db": acpr_db,
+		"obw_hz": obw_hz,
 		"metrics": {
 			"evm_percent": ev_percent,
 			"evm_db": float(20 * np.log10(ev_ratio)),
 			"ber": ber,
-			"acpr_db": _compute_acpr_db(psd, freqs),
-			"obw_hz": _compute_obw_hz(psd, freqs),
 			"snr_db": _compute_snr_db(reference_symbols, stage_symbols),
 		},
 	}
@@ -248,45 +270,82 @@ def run_app() -> None:
 	initialize_control_state()
 	controls = get_current_controls()
 	rng = np.random.default_rng(1234)
+	samples_per_symbol = max(int(controls["samples_per_symbol"]), 1)
+	symbol_rate_hz = 1e6
+	sampling_rate_hz = symbol_rate_hz * samples_per_symbol
 
 	tx_bits = _parse_source_bits(controls["source_type"], controls["source_input"], count=4096)
 	tx_symbols, padded_bits = _generate_symbols(tx_bits, controls["modulation_type"])
+	tx_waveform = _upsample_signal(tx_symbols, samples_per_symbol)
 
-	iq_modulator_symbols = tx_symbols.copy()
+	iq_modulator_waveform = tx_waveform.copy()
 	impaired = _apply_iq_imbalance(
-		iq_modulator_symbols.copy(),
+		iq_modulator_waveform.copy(),
 		controls["iq_gain_mismatch_db"],
 		controls["iq_phase_mismatch_deg"],
 	)
 	impaired = _apply_phase_noise(impaired, controls["phase_noise_deg"], rng)
-	impairments_symbols = _apply_pa_nonlinearity(impaired, controls["pa_1dbcp_dbm"])
-	channel_out = _add_awgn(impairments_symbols, controls["snr_db"], rng)
-	rx_symbols = _quantize_complex_signal(channel_out, sr_hz=1e6, bits=controls["adc_bits"])
+	impairments_waveform = _apply_pa_nonlinearity(impaired, controls["pa_1dbcp_dbm"])
+	channel_out = _add_awgn(impairments_waveform, controls["snr_db"], rng)
+	rx_waveform = _quantize_complex_signal(channel_out, sr_hz=sampling_rate_hz, bits=controls["adc_bits"])
+
+	iq_modulator_symbols = _sample_symbols_from_waveform(iq_modulator_waveform, samples_per_symbol)
+	impairments_symbols = _sample_symbols_from_waveform(impairments_waveform, samples_per_symbol)
+	channel_symbols = _sample_symbols_from_waveform(channel_out, samples_per_symbol)
+	rx_symbols = _sample_symbols_from_waveform(rx_waveform, samples_per_symbol)
 
 	stage_results = [
 		{
 			"name": "IQ MODULATOR",
 			"symbols": iq_modulator_symbols,
 			"ideal_symbols": tx_symbols,
-			**_compute_stage_metrics(tx_symbols, iq_modulator_symbols, padded_bits, controls["modulation_type"]),
+			**_compute_stage_metrics(
+				tx_symbols,
+				iq_modulator_symbols,
+				padded_bits,
+				controls["modulation_type"],
+				spectrum_signal=iq_modulator_waveform,
+				sampling_rate_hz=sampling_rate_hz,
+			),
 		},
 		{
 			"name": "IMPARMENTS",
 			"symbols": impairments_symbols,
 			"ideal_symbols": tx_symbols,
-			**_compute_stage_metrics(tx_symbols, impairments_symbols, padded_bits, controls["modulation_type"]),
+			**_compute_stage_metrics(
+				tx_symbols,
+				impairments_symbols,
+				padded_bits,
+				controls["modulation_type"],
+				spectrum_signal=impairments_waveform,
+				sampling_rate_hz=sampling_rate_hz,
+			),
 		},
 		{
 			"name": "CHANNEL",
-			"symbols": channel_out,
+			"symbols": channel_symbols,
 			"ideal_symbols": tx_symbols,
-			**_compute_stage_metrics(tx_symbols, channel_out, padded_bits, controls["modulation_type"]),
+			**_compute_stage_metrics(
+				tx_symbols,
+				channel_symbols,
+				padded_bits,
+				controls["modulation_type"],
+				spectrum_signal=channel_out,
+				sampling_rate_hz=sampling_rate_hz,
+			),
 		},
 		{
 			"name": "ADC",
 			"symbols": rx_symbols,
 			"ideal_symbols": tx_symbols,
-			**_compute_stage_metrics(tx_symbols, rx_symbols, padded_bits, controls["modulation_type"]),
+			**_compute_stage_metrics(
+				tx_symbols,
+				rx_symbols,
+				padded_bits,
+				controls["modulation_type"],
+				spectrum_signal=rx_waveform,
+				sampling_rate_hz=sampling_rate_hz,
+			),
 		},
 	]
 
