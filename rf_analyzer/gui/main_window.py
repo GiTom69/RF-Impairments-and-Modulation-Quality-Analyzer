@@ -7,6 +7,21 @@ from rf_analyzer.impairments.adc_quantization import quantize
 from rf_analyzer.utils.fft_utils import compute_power_spectrum
 
 
+_PIPELINE_CACHE_KEY = "pipeline_cache"
+_SOURCE_STAGE_INDEX = 0
+_IMPAIRMENTS_STAGE_INDEX = 1
+_CHANNEL_STAGE_INDEX = 2
+_ADC_STAGE_INDEX = 3
+
+_SOURCE_CONTROL_KEYS = {"source_type", "source_input", "modulation_type", "samples_per_symbol"}
+_IMPAIRMENT_CONTROL_KEYS = {"iq_gain_mismatch_db", "iq_phase_mismatch_deg", "phase_noise_deg", "pa_1dbcp_dbm", "clipping_enabled"}
+_CHANNEL_CONTROL_KEYS = {"snr_db"}
+_ADC_CONTROL_KEYS = {"adc_bits"}
+
+_PHASE_NOISE_SEED = 1234
+_CHANNEL_NOISE_SEED = 5678
+
+
 def _gray_code(value: int) -> int:
 	return value ^ (value >> 1)
 
@@ -273,6 +288,160 @@ def _compute_stage_metrics(
 	}
 
 
+def _build_stage_result(
+	name: str,
+	stage_symbols: np.ndarray,
+	ideal_symbols: np.ndarray,
+	reference_bits: np.ndarray,
+	modulation_type: str,
+	spectrum_signal: np.ndarray,
+	sampling_rate_hz: float,
+) -> dict:
+	return {
+		"name": name,
+		"symbols": stage_symbols,
+		"ideal_symbols": ideal_symbols,
+		**_compute_stage_metrics(
+			ideal_symbols,
+			stage_symbols,
+			reference_bits,
+			modulation_type,
+			spectrum_signal=spectrum_signal,
+			sampling_rate_hz=sampling_rate_hz,
+		),
+	}
+
+
+def _get_recompute_stage_index(previous_controls: dict | None, current_controls: dict) -> int | None:
+	if not previous_controls:
+		return _SOURCE_STAGE_INDEX
+
+	changed_keys = {key for key, value in current_controls.items() if previous_controls.get(key) != value}
+	if not changed_keys:
+		return None
+	if changed_keys & _SOURCE_CONTROL_KEYS:
+		return _SOURCE_STAGE_INDEX
+	if changed_keys & _IMPAIRMENT_CONTROL_KEYS:
+		return _IMPAIRMENTS_STAGE_INDEX
+	if changed_keys & _CHANNEL_CONTROL_KEYS:
+		return _CHANNEL_STAGE_INDEX
+	if changed_keys & _ADC_CONTROL_KEYS:
+		return _ADC_STAGE_INDEX
+	return _SOURCE_STAGE_INDEX
+
+
+def _compute_iq_modulator_stage(controls: dict) -> dict:
+	samples_per_symbol = max(int(controls["samples_per_symbol"]), 1)
+	symbol_rate_hz = 1e6
+	sampling_rate_hz = symbol_rate_hz * samples_per_symbol
+	tx_bits = _parse_source_bits(controls["source_type"], controls["source_input"], count=4096)
+	tx_symbols, padded_bits = _generate_symbols(tx_bits, controls["modulation_type"])
+	iq_modulator_waveform = _upsample_signal(tx_symbols, samples_per_symbol)
+	iq_modulator_symbols = _sample_symbols_from_waveform(iq_modulator_waveform, samples_per_symbol)
+	return {
+		"samples_per_symbol": samples_per_symbol,
+		"sampling_rate_hz": sampling_rate_hz,
+		"tx_bits": tx_bits,
+		"tx_symbols": tx_symbols,
+		"padded_bits": padded_bits,
+		"iq_modulator_waveform": iq_modulator_waveform,
+		"iq_modulator_symbols": iq_modulator_symbols,
+		"iq_modulator_stage": _build_stage_result(
+			"IQ MODULATOR",
+			iq_modulator_symbols,
+			tx_symbols,
+			padded_bits,
+			controls["modulation_type"],
+			iq_modulator_waveform,
+			sampling_rate_hz,
+		),
+	}
+
+
+def _compute_impairments_stage(
+	iq_modulator_waveform: np.ndarray,
+	tx_symbols: np.ndarray,
+	padded_bits: np.ndarray,
+	controls: dict,
+	samples_per_symbol: int,
+	sampling_rate_hz: float,
+) -> dict:
+	phase_rng = np.random.default_rng(_PHASE_NOISE_SEED)
+	impaired = _apply_iq_imbalance(
+		iq_modulator_waveform.copy(),
+		controls["iq_gain_mismatch_db"],
+		controls["iq_phase_mismatch_deg"],
+	)
+	impaired = _apply_phase_noise(impaired, controls["phase_noise_deg"], phase_rng)
+	impairments_waveform = _apply_pa_nonlinearity(impaired, controls["pa_1dbcp_dbm"])
+	impairments_waveform = _clip_and_normalize_iq(impairments_waveform, controls["clipping_enabled"])
+	impairments_symbols = _sample_symbols_from_waveform(impairments_waveform, samples_per_symbol)
+	return {
+		"impairments_waveform": impairments_waveform,
+		"impairments_symbols": impairments_symbols,
+		"impairments_stage": _build_stage_result(
+			"IMPARMENTS",
+			impairments_symbols,
+			tx_symbols,
+			padded_bits,
+			controls["modulation_type"],
+			impairments_waveform,
+			sampling_rate_hz,
+		),
+	}
+
+
+def _compute_channel_stage(
+	impairments_waveform: np.ndarray,
+	tx_symbols: np.ndarray,
+	padded_bits: np.ndarray,
+	controls: dict,
+	samples_per_symbol: int,
+	sampling_rate_hz: float,
+) -> dict:
+	channel_rng = np.random.default_rng(_CHANNEL_NOISE_SEED)
+	channel_waveform = _add_awgn(impairments_waveform, controls["snr_db"], channel_rng)
+	channel_symbols = _sample_symbols_from_waveform(channel_waveform, samples_per_symbol)
+	return {
+		"channel_waveform": channel_waveform,
+		"channel_symbols": channel_symbols,
+		"channel_stage": _build_stage_result(
+			"CHANNEL",
+			channel_symbols,
+			tx_symbols,
+			padded_bits,
+			controls["modulation_type"],
+			channel_waveform,
+			sampling_rate_hz,
+		),
+	}
+
+
+def _compute_adc_stage(
+	channel_waveform: np.ndarray,
+	tx_symbols: np.ndarray,
+	padded_bits: np.ndarray,
+	controls: dict,
+	samples_per_symbol: int,
+	sampling_rate_hz: float,
+) -> dict:
+	rx_waveform = _quantize_complex_signal(channel_waveform, sr_hz=sampling_rate_hz, bits=controls["adc_bits"])
+	rx_symbols = _sample_symbols_from_waveform(rx_waveform, samples_per_symbol)
+	return {
+		"rx_waveform": rx_waveform,
+		"rx_symbols": rx_symbols,
+		"adc_stage": _build_stage_result(
+			"ADC",
+			rx_symbols,
+			tx_symbols,
+			padded_bits,
+			controls["modulation_type"],
+			rx_waveform,
+			sampling_rate_hz,
+		),
+	}
+
+
 def _quantize_complex_signal(signal: np.ndarray, sr_hz: float, bits: int) -> np.ndarray:
 	real = np.array([quantize(float(value), sr_hz, bits) for value in signal.real])
 	imag = np.array([quantize(float(value), sr_hz, bits) for value in signal.imag])
@@ -284,86 +453,66 @@ def run_app() -> None:
 	st.title("RF Impairments & Modulation Quality Analyzer")
 	initialize_control_state()
 	controls = get_current_controls()
-	rng = np.random.default_rng(1234)
-	samples_per_symbol = max(int(controls["samples_per_symbol"]), 1)
-	symbol_rate_hz = 1e6
-	sampling_rate_hz = symbol_rate_hz * samples_per_symbol
+	cache = st.session_state.get(_PIPELINE_CACHE_KEY, {})
+	recompute_stage_index = _get_recompute_stage_index(cache.get("controls"), controls)
 
-	tx_bits = _parse_source_bits(controls["source_type"], controls["source_input"], count=4096)
-	tx_symbols, padded_bits = _generate_symbols(tx_bits, controls["modulation_type"])
-	tx_waveform = _upsample_signal(tx_symbols, samples_per_symbol)
+	if recompute_stage_index is None:
+		stage_results = cache["stage_results"]
+		tx_symbols = cache["tx_symbols"]
+	else:
+		if recompute_stage_index <= _SOURCE_STAGE_INDEX:
+			cache.update(_compute_iq_modulator_stage(controls))
 
-	iq_modulator_waveform = tx_waveform.copy()
-	impaired = _apply_iq_imbalance(
-		iq_modulator_waveform.copy(),
-		controls["iq_gain_mismatch_db"],
-		controls["iq_phase_mismatch_deg"],
-	)
-	impaired = _apply_phase_noise(impaired, controls["phase_noise_deg"], rng)
-	impairments_waveform = _apply_pa_nonlinearity(impaired, controls["pa_1dbcp_dbm"])
-	impairments_waveform = _clip_and_normalize_iq(impairments_waveform, controls["clipping_enabled"])
-	channel_out = _add_awgn(impairments_waveform, controls["snr_db"], rng)
-	rx_waveform = _quantize_complex_signal(channel_out, sr_hz=sampling_rate_hz, bits=controls["adc_bits"])
+		samples_per_symbol = cache["samples_per_symbol"]
+		sampling_rate_hz = cache["sampling_rate_hz"]
+		tx_symbols = cache["tx_symbols"]
+		padded_bits = cache["padded_bits"]
 
-	iq_modulator_symbols = _sample_symbols_from_waveform(iq_modulator_waveform, samples_per_symbol)
-	impairments_symbols = _sample_symbols_from_waveform(impairments_waveform, samples_per_symbol)
-	channel_symbols = _sample_symbols_from_waveform(channel_out, samples_per_symbol)
-	rx_symbols = _sample_symbols_from_waveform(rx_waveform, samples_per_symbol)
+		if recompute_stage_index <= _IMPAIRMENTS_STAGE_INDEX:
+			cache.update(
+				_compute_impairments_stage(
+					cache["iq_modulator_waveform"],
+					tx_symbols,
+					padded_bits,
+					controls,
+					samples_per_symbol,
+					sampling_rate_hz,
+				)
+			)
 
-	stage_results = [
-		{
-			"name": "IQ MODULATOR",
-			"symbols": iq_modulator_symbols,
-			"ideal_symbols": tx_symbols,
-			**_compute_stage_metrics(
-				tx_symbols,
-				iq_modulator_symbols,
-				padded_bits,
-				controls["modulation_type"],
-				spectrum_signal=iq_modulator_waveform,
-				sampling_rate_hz=sampling_rate_hz,
-			),
-		},
-		{
-			"name": "IMPARMENTS",
-			"symbols": impairments_symbols,
-			"ideal_symbols": tx_symbols,
-			**_compute_stage_metrics(
-				tx_symbols,
-				impairments_symbols,
-				padded_bits,
-				controls["modulation_type"],
-				spectrum_signal=impairments_waveform,
-				sampling_rate_hz=sampling_rate_hz,
-			),
-		},
-		{
-			"name": "CHANNEL",
-			"symbols": channel_symbols,
-			"ideal_symbols": tx_symbols,
-			**_compute_stage_metrics(
-				tx_symbols,
-				channel_symbols,
-				padded_bits,
-				controls["modulation_type"],
-				spectrum_signal=channel_out,
-				sampling_rate_hz=sampling_rate_hz,
-			),
-		},
-		{
-			"name": "ADC",
-			"symbols": rx_symbols,
-			"ideal_symbols": tx_symbols,
-			**_compute_stage_metrics(
-				tx_symbols,
-				rx_symbols,
-				padded_bits,
-				controls["modulation_type"],
-				spectrum_signal=rx_waveform,
-				sampling_rate_hz=sampling_rate_hz,
-			),
-		},
-	]
+		if recompute_stage_index <= _CHANNEL_STAGE_INDEX:
+			cache.update(
+				_compute_channel_stage(
+					cache["impairments_waveform"],
+					tx_symbols,
+					padded_bits,
+					controls,
+					samples_per_symbol,
+					sampling_rate_hz,
+				)
+			)
+
+		if recompute_stage_index <= _ADC_STAGE_INDEX:
+			cache.update(
+				_compute_adc_stage(
+					cache["channel_waveform"],
+					tx_symbols,
+					padded_bits,
+					controls,
+					samples_per_symbol,
+					sampling_rate_hz,
+				)
+			)
+
+		stage_results = [
+			cache["iq_modulator_stage"],
+			cache["impairments_stage"],
+			cache["channel_stage"],
+			cache["adc_stage"],
+		]
+		cache["stage_results"] = stage_results
+		cache["controls"] = controls.copy()
+		st.session_state[_PIPELINE_CACHE_KEY] = cache
 
 	final_ber = stage_results[-1]["metrics"]["ber"]
 
