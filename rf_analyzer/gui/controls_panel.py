@@ -6,7 +6,6 @@ DEFAULT_CONTROLS = {
 	"source_input": "12345",
 	"modulation_type": "16-QAM",
 	"samples_per_symbol": 8,
-	"iq_imbalance_enabled": False,
 	"iq_gain_mismatch_db": 0,
 	"iq_phase_mismatch_deg": 0,
 	"phase_noise_deg": 0,
@@ -68,13 +67,11 @@ def render_controls() -> dict:
 
 	with cols[2]:
 		st.markdown("**RF Impairments**")
-		st.toggle("IQ Imbalance", key="iq_imbalance_enabled")
 		st.slider(
 			"Gain mismatch (dB)",
 			min_value=-10,
 			max_value=10,
 			step=1,
-			disabled=not st.session_state["iq_imbalance_enabled"],
 			key="iq_gain_mismatch_db",
 		)
 		st.slider(
@@ -82,7 +79,6 @@ def render_controls() -> dict:
 			min_value=0,
 			max_value=90,
 			step=1,
-			disabled=not st.session_state["iq_imbalance_enabled"],
 			key="iq_phase_mismatch_deg",
 		)
 		st.slider(

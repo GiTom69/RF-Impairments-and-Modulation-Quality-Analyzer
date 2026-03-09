@@ -253,13 +253,11 @@ def run_app() -> None:
 	tx_symbols, padded_bits = _generate_symbols(tx_bits, controls["modulation_type"])
 
 	iq_modulator_symbols = tx_symbols.copy()
-	impaired = iq_modulator_symbols.copy()
-	if controls["iq_imbalance_enabled"]:
-		impaired = _apply_iq_imbalance(
-			impaired,
-			controls["iq_gain_mismatch_db"],
-			controls["iq_phase_mismatch_deg"],
-		)
+	impaired = _apply_iq_imbalance(
+		iq_modulator_symbols.copy(),
+		controls["iq_gain_mismatch_db"],
+		controls["iq_phase_mismatch_deg"],
+	)
 	impaired = _apply_phase_noise(impaired, controls["phase_noise_deg"], rng)
 	impairments_symbols = _apply_pa_nonlinearity(impaired, controls["pa_1dbcp_dbm"])
 	channel_out = _add_awgn(impairments_symbols, controls["snr_db"], rng)
@@ -298,7 +296,7 @@ def run_app() -> None:
 		"bits_source": f"{controls['source_type']}",
 		"iq_modulator": f"{controls['modulation_type']}, SPS={controls['samples_per_symbol']}",
 		"impairments": (
-			f"IQ {'ON' if controls['iq_imbalance_enabled'] else 'OFF'}, "
+			f"IQ G={controls['iq_gain_mismatch_db']} dB, Phase={controls['iq_phase_mismatch_deg']}°, "
 			f"PN={controls['phase_noise_deg']}°, PA={controls['pa_1dbcp_dbm']} dBm"
 		),
 		"channel": f"SNR={controls['snr_db']} dB",
