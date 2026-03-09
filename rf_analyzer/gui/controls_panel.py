@@ -10,6 +10,7 @@ DEFAULT_CONTROLS = {
 	"iq_phase_mismatch_deg": 0,
 	"phase_noise_deg": 0,
 	"pa_1dbcp_dbm": 0,
+	"clipping_enabled": False,
 	"snr_db": 20,
 	"adc_bits": 12,
 }
@@ -129,6 +130,10 @@ def render_controls() -> dict:
 				max_value=10,
 				step=1,
 				key="pa_1dbcp_dbm",
+			)
+			st.toggle(
+				"Clipping",
+				key="clipping_enabled",
 			)
 
 		with cols[3]:

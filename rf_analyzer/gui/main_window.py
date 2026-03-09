@@ -157,9 +157,18 @@ def _apply_pa_nonlinearity(signal: np.ndarray, p1dbcp_dbm: float) -> np.ndarray:
 	compression = 10 ** (p1dbcp_dbm / 20)
 	if compression <= 0:
 		compression = 1e-9
-	clipped_real = np.clip(signal.real, -compression, compression)
-	clipped_imag = np.clip(signal.imag, -compression, compression)
-	return clipped_real + 1j * clipped_imag
+	soft_real = compression * np.tanh(signal.real / compression)
+	soft_imag = compression * np.tanh(signal.imag / compression)
+	return soft_real + 1j * soft_imag
+
+
+def _normalize_or_clip_iq(signal: np.ndarray, clipping_enabled: bool) -> np.ndarray:
+	if clipping_enabled:
+		return np.clip(signal.real, -1.0, 1.0) + 1j * np.clip(signal.imag, -1.0, 1.0)
+
+	max_mag = float(np.max(np.abs(signal))) if signal.size else 0.0
+	scale = max(max_mag, 1.0)
+	return signal / scale
 
 
 def _add_awgn(signal: np.ndarray, snr_db: float, rng: np.random.Generator) -> np.ndarray:
@@ -286,6 +295,7 @@ def run_app() -> None:
 	)
 	impaired = _apply_phase_noise(impaired, controls["phase_noise_deg"], rng)
 	impairments_waveform = _apply_pa_nonlinearity(impaired, controls["pa_1dbcp_dbm"])
+	impairments_waveform = _normalize_or_clip_iq(impairments_waveform, controls["clipping_enabled"])
 	channel_out = _add_awgn(impairments_waveform, controls["snr_db"], rng)
 	rx_waveform = _quantize_complex_signal(channel_out, sr_hz=sampling_rate_hz, bits=controls["adc_bits"])
 
@@ -356,7 +366,8 @@ def run_app() -> None:
 		"iq_modulator": f"{controls['modulation_type']}, SPS={controls['samples_per_symbol']}",
 		"impairments": (
 			f"IQ G={controls['iq_gain_mismatch_db']} dB, Phase={controls['iq_phase_mismatch_deg']}°, "
-			f"PN={controls['phase_noise_deg']}°, PA={controls['pa_1dbcp_dbm']} dBm"
+			f"PN={controls['phase_noise_deg']}°, PA={controls['pa_1dbcp_dbm']} dBm, "
+			f"{'Clip' if controls['clipping_enabled'] else 'Normalize'}"
 		),
 		"channel": f"SNR={controls['snr_db']} dB",
 		"adc": f"{controls['adc_bits']} bits",
