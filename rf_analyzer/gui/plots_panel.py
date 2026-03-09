@@ -3,6 +3,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 
+_CONSTELLATION_SIZE_PX = 320
+
+
 def _get_sorted_spectrum(stage: dict) -> tuple[np.ndarray, np.ndarray]:
 	order = np.argsort(stage["freqs"])
 	freqs = np.asarray(stage["freqs"])[order]
@@ -69,8 +72,8 @@ def _render_constellation_figure(stage: dict, show_ideal: bool) -> go.Figure:
 		yaxis_title="Q",
 		margin=dict(l=35, r=35, t=30, b=35),
 		showlegend=False,
-		width=420,
-		height=420,
+		width=_CONSTELLATION_SIZE_PX,
+		height=_CONSTELLATION_SIZE_PX,
 		xaxis=dict(
 			range=[-1.1, 1.1], 
 			constrain="domain",
@@ -138,7 +141,7 @@ def render_visualizations(stage_results: list[dict]) -> None:
 			)
 			st.plotly_chart(
 				_render_constellation_figure(stage, show_ideal),
-				width="content",
+				width=_CONSTELLATION_SIZE_PX,
 				config={"staticPlot": True},
 				key=f"constellation_{index}_{stage['name']}",
 			)
