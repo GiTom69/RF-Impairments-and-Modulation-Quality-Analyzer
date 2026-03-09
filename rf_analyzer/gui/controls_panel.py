@@ -96,7 +96,7 @@ def render_controls() -> dict:
 			st.slider(
 				"Samples per symbol",
 				min_value=1,
-				max_value=100,
+				max_value=64,
 				step=1,
 				key="samples_per_symbol",
 			)
